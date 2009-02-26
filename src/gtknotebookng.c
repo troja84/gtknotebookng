@@ -59,7 +59,8 @@ static void     gtk_notebook_ng_forall              (GtkContainer     *container
 
 /* PRIVATE: GtkNotebookNg convenience functions */
 static void     gtk_notebook_ng_select_widget      (GtkNotebookNg *notebook,
-                                                    GtkWidget     *widget);
+                                                    GtkWidget     *widget,
+                                                    gboolean       activate_tab);
 
 /* PRIVATE: GtkNotebookNg and notebook tabs connection */
 static void     gtk_notebook_ng_select_cb          (GtkButton     *button,
@@ -213,7 +214,7 @@ gtk_notebook_ng_map (GtkWidget *widget)
 
 /* - START - PRIVATE to gtk_notebook_ng_size_request */
 static void
-gtk_notebook_ng_size_request_children (GtkWidget *widget,
+gtk_notebook_ng_size_request_children (GtkWidget      *widget,
                                        GtkRequisition *requisition)
 {
   GtkNotebookNg *notebook;
@@ -233,36 +234,33 @@ gtk_notebook_ng_size_request_children (GtkWidget *widget,
     {
       child_widget = GTK_WIDGET (children->data);
 
-      if (GTK_WIDGET_VISIBLE (child_widget))
-        {
-          gtk_widget_size_request (child_widget, &child_requisition);
+      gtk_widget_size_request (child_widget, &child_requisition);
 
-          requisition->width = MAX (requisition->width,
-                                    child_requisition.width);
-          requisition->height = MAX (requisition->height,
-                                     child_requisition.height);
+      requisition->width = MAX (requisition->width,
+                                child_requisition.width);
+      requisition->height = MAX (requisition->height,
+                                 child_requisition.height);
 
-          /*
-          g_printf ("> REQUEST CHILD NEW: W: %d H: %d\n",
-                    requisition->width, requisition->height);
-          */
-        }
+      /*
+      g_printf ("> REQUEST CHILD NEW: W: %d H: %d\n",
+                requisition->width, requisition->height);
+      */
 
       children = children->next;
     }
 }
 
 static void
-gtk_notebook_ng_size_request_tabs (GtkWidget *widget,
+gtk_notebook_ng_size_request_tabs (GtkWidget      *widget,
                                    GtkRequisition *requisition)
 {
   GtkNotebookNg *notebook;
   GtkNotebookNgPrivate *priv;
-  GList *children;
-  GtkWidget *child_widget;
+  GList *tabs;
+  GtkWidget *tab;
   GtkRequisition child_requisition, tabs_requisition;
   GtkRequisition max_requisition, offset_requisition;
-  gint /*max_size,*/ counter;
+  gint counter;
   gint max_height = 0;
 
   g_return_if_fail (GTK_IS_NOTEBOOK_NG (widget));
@@ -279,17 +277,17 @@ gtk_notebook_ng_size_request_tabs (GtkWidget *widget,
   offset_requisition.width = 0;
   offset_requisition.height = 0;
 
-  children = g_queue_peek_head_link (priv->tabs);
+  tabs = g_queue_peek_head_link (priv->tabs);
   counter = 0;
 
-  while (children)
+  while (tabs)
     {
-      child_widget = GTK_WIDGET (children->data);
+      tab = GTK_WIDGET (tabs->data);
 
-      if (!GTK_WIDGET_VISIBLE (child_widget))
-        gtk_widget_show_all (child_widget);
+      if (!GTK_WIDGET_DRAWABLE (tab))
+        gtk_widget_map (tab);
 
-      gtk_widget_size_request (child_widget, &child_requisition);
+      gtk_widget_size_request (tab, &child_requisition);
 
       tabs_requisition.width += child_requisition.width;
       tabs_requisition.height += child_requisition.height;
@@ -307,7 +305,7 @@ gtk_notebook_ng_size_request_tabs (GtkWidget *widget,
 
       counter++;
 
-      children = children->next;
+      tabs = tabs->next;
     }
 
   switch (priv->position)
@@ -373,7 +371,7 @@ gtk_notebook_ng_size_request (GtkWidget      *widget,
   */
 }
 
-/* - START - PRIVATE to gtk_notebook_ng_size_request */
+/* - START - PRIVATE to gtk_notebook_ng_size_allocate */
 static void
 gtk_notebook_ng_max_tab_size (GtkNotebookNg *notebook,
                               gint          *width,
@@ -494,15 +492,12 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
 
   tabs = g_queue_peek_head_link (priv->tabs);
 
-  for (counter = 0; counter < priv->offset; tabs = tabs->next, counter++)
+  for (counter = 0; counter < priv->offset && tabs; tabs = tabs->next, counter++)
     gtk_widget_unmap (GTK_WIDGET (tabs->data));
 
-  while (tabs && !need_button_next)
+  while (tabs)
     {
       tab = GTK_WIDGET (tabs->data);
-
-      if (!GTK_WIDGET_DRAWABLE (tab))
-        gtk_widget_map (tab);
 
       gtk_widget_size_request (tab, &child_requisition);
 
@@ -557,6 +552,11 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
                 child_allocation.width, child_allocation.height);
       */
 
+      if (!GTK_WIDGET_DRAWABLE (tab) && !need_button_next)
+        gtk_widget_map (tab);
+      else if (GTK_WIDGET_DRAWABLE (tab) && need_button_next)
+        gtk_widget_unmap (tab);
+
       gtk_widget_size_allocate (tab, &child_allocation);
 
       tabs = tabs->next;
@@ -595,6 +595,12 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
               gtk_widget_queue_resize (widget);
             break;
         }
+
+      /*
+      g_printf ("> ALLOC NEXT: X: %d Y: %d W: %d H: %d\n",
+                child_allocation.x, child_allocation.y,
+                child_allocation.width, child_allocation.height);
+      */
 
       gtk_widget_size_allocate (priv->next, &child_allocation);
     }
@@ -712,8 +718,6 @@ gtk_notebook_ng_expose (GtkWidget      *widget,
 
   if (GTK_WIDGET_DRAWABLE (widget))
     {
-      //g_printf ("> DRAW\n");
-
       if (priv->show_tabs)
         {
           GList *tabs;
@@ -757,6 +761,283 @@ gtk_notebook_ng_expose (GtkWidget      *widget,
     }
 
   return FALSE;
+}
+
+/*** GtkNotebookNg API ***/
+void 
+gtk_notebook_ng_remove_page (GtkNotebookNg *notebook,
+                             gint           position)
+{
+  GtkNotebookNgPrivate *priv;
+  GtkWidget *remove;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  remove = g_queue_peek_nth (priv->tabs, position);
+
+  g_return_if_fail (remove);
+
+  remove = g_hash_table_lookup (priv->tabs_to_widgets, remove);
+
+  gtk_notebook_ng_remove (GTK_CONTAINER (notebook), remove);
+}
+
+gint
+gtk_notebook_ng_page_num (GtkNotebookNg *notebook,
+                          GtkWidget     *child)
+{
+  GtkNotebookNgPrivate *priv;
+  GtkWidget *tab;
+
+  g_return_val_if_fail (notebook, -1);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  tab = g_hash_table_lookup (priv->widgets_to_tabs, child);
+
+  return g_queue_index (priv->tabs, tab);
+}
+
+void
+gtk_notebook_ng_next_page (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+  GList *tabs;
+  GtkWidget *tab, *next_child;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  tab = g_hash_table_lookup (priv->widgets_to_tabs, priv->active);
+
+  tabs = g_queue_peek_nth_link (priv->tabs, g_queue_index (priv->tabs, tab));
+
+  if (!tabs->next)
+    return;
+
+  tab = GTK_WIDGET (tabs->next->data);
+
+  g_return_if_fail (tab);
+
+  next_child = g_hash_table_lookup (priv->tabs_to_widgets, tab);
+
+  gtk_notebook_ng_select_widget (notebook, next_child, TRUE);
+}
+
+void
+gtk_notebook_ng_prev_page (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+  GList *tabs;
+  GtkWidget *tab, *prev_child;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  tab = g_hash_table_lookup (priv->widgets_to_tabs, priv->active);
+
+  tabs = g_queue_peek_nth_link (priv->tabs, g_queue_index (priv->tabs, tab));
+
+  if (!tabs->prev)
+    return;
+
+  tab = GTK_WIDGET (tabs->prev->data);
+
+  g_return_if_fail (tab);
+
+  prev_child = g_hash_table_lookup (priv->tabs_to_widgets, tab);
+
+  gtk_notebook_ng_select_widget (notebook, prev_child, TRUE);
+}
+
+void
+gtk_notebook_ng_reorder_child (GtkNotebookNg *notebook,
+                               GtkWidget     *child,
+                               gint           position)
+{
+  GtkNotebookNgPrivate *priv;
+  GtkWidget *tab;
+  gint pos = -1;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  tab = g_hash_table_lookup (priv->widgets_to_tabs, child);
+
+  g_return_if_fail (tab);
+
+  pos = g_queue_index (priv->tabs, tab);
+
+  tab = g_queue_pop_nth (priv->tabs, pos);
+
+  g_return_if_fail (tab);
+
+  g_queue_push_nth (priv->tabs, tab, position);
+
+  gtk_widget_queue_resize (GTK_WIDGET (notebook));
+}
+
+void
+gtk_notebook_ng_set_tab_pos (GtkNotebookNg   *notebook,
+                             GtkPositionType  pos)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  if (priv->position != pos)
+    {
+      priv->position = pos;
+
+      gtk_widget_queue_resize (GTK_WIDGET (notebook));
+    }
+}
+
+GtkPositionType
+gtk_notebook_ng_get_tab_pos (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_val_if_fail (notebook, GTK_POS_TOP);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+  
+  return priv->position;
+}
+
+void
+gtk_notebook_ng_set_show_tabs (GtkNotebookNg *notebook,
+                               gboolean       show_tabs)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  if (priv->show_tabs != show_tabs)
+    {
+      priv->show_tabs = show_tabs;
+
+      gtk_widget_queue_resize (GTK_WIDGET (notebook));
+    }
+}
+
+gboolean
+gtk_notebook_ng_get_show_tabs (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_val_if_fail (notebook, TRUE);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+  
+  return priv->show_tabs;
+}
+
+void
+gtk_notebook_ng_set_show_border (GtkNotebookNg *notebook,
+                                 gboolean       show_border)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  if (priv->show_border != show_border)
+    {
+      priv->show_border = show_border;
+
+      gtk_widget_queue_resize (GTK_WIDGET (notebook));
+    }
+}
+
+gboolean
+gtk_notebook_ng_get_show_border (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_val_if_fail (notebook, TRUE);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+  
+  return priv->show_border;
+}
+
+void
+gtk_notebook_ng_set_current_page (GtkNotebookNg *notebook,
+                                  gint           page_num)
+{
+  GtkNotebookNgPrivate *priv;
+  GtkWidget *current_new;
+
+  g_return_if_fail (notebook);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  current_new = g_queue_peek_nth (priv->tabs, page_num);
+
+  g_return_if_fail (current_new);
+
+  current_new = g_hash_table_lookup (priv->tabs_to_widgets, current_new);
+
+  gtk_notebook_ng_select_widget (notebook, current_new, TRUE);
+
+  gtk_widget_queue_resize (GTK_WIDGET (notebook));
+}
+
+gint
+gtk_notebook_ng_get_current_page (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+  GtkWidget *tab;
+
+  g_return_val_if_fail (notebook, -1);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  tab = g_hash_table_lookup (priv->widgets_to_tabs, priv->active);
+  
+  return g_queue_index (priv->tabs, tab);
+}
+
+GtkWidget*
+gtk_notebook_ng_get_nth_page (GtkNotebookNg *notebook,
+                              gint           page_num)
+{
+  GtkNotebookNgPrivate *priv;
+  GtkWidget *tab;
+
+  g_return_val_if_fail (notebook, NULL);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  tab = g_queue_peek_nth (priv->tabs, page_num);
+
+  if (!tab)
+    return NULL;
+
+  return g_hash_table_lookup (priv->tabs_to_widgets, tab);
+}
+
+gint
+gtk_notebook_ng_get_n_pages (GtkNotebookNg *notebook)
+{
+  GtkNotebookNgPrivate *priv;
+
+  g_return_val_if_fail (notebook, -1);
+
+  priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
+
+  return g_queue_get_length (priv->tabs);
 }
 
 /*** GtkContainer Methods ***/
@@ -803,6 +1084,8 @@ gtk_notebook_ng_add (GtkContainer *container,
       tab = gtk_radio_button_new_with_label_from_widget (active_button, label);
     }
   //g_free (label);
+
+  tab = g_object_ref (tab);
 
   gtk_widget_set_parent (tab, GTK_WIDGET (notebook));
   gtk_widget_set_parent (widget, GTK_WIDGET (notebook));
@@ -851,7 +1134,8 @@ gtk_notebook_ng_remove (GtkContainer *container,
   GtkNotebookNg *notebook;
   GtkNotebookNgPrivate *priv;
   GList* tabs;
-  GtkWidget *tab;
+  GtkWidget *tab, *tab_next;
+  gboolean destroy;
 
   g_return_if_fail (GTK_IS_NOTEBOOK_NG (container));
   g_return_if_fail (widget && GTK_IS_WIDGET (widget));
@@ -860,25 +1144,43 @@ gtk_notebook_ng_remove (GtkContainer *container,
 
   priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
 
+  destroy = GTK_OBJECT_FLAGS (notebook) & GTK_IN_DESTRUCTION;
+
   tab = g_hash_table_lookup (priv->widgets_to_tabs, widget);
 
   tabs = g_queue_find (priv->tabs, tab);
 
-  if (tabs->next)
-    gtk_notebook_ng_select_widget (notebook,
-                                   GTK_WIDGET (tabs->next->data));
-  else if (tabs->prev)
-    gtk_notebook_ng_select_widget (notebook,
-                                   GTK_WIDGET (tabs->prev->data));
-  else
-    gtk_notebook_ng_select_widget (notebook, NULL);
+  if (!destroy)
+  {
+    if (tabs->next)
+      tab_next = GTK_WIDGET (tabs->next->data);
+    else if (tabs->prev)
+      tab_next = GTK_WIDGET (tabs->prev->data);
+    else
+      tab_next = NULL;
+
+    if (tab_next)
+      {
+        GtkWidget *select_child;
+
+        select_child = g_hash_table_lookup (priv->tabs_to_widgets, tab_next);
+
+        gtk_notebook_ng_select_widget (notebook, select_child, TRUE);
+      }
+    else
+      gtk_notebook_ng_select_widget (notebook, NULL, FALSE);
+  }
 
   gtk_widget_unparent (tab);
   gtk_widget_unparent (widget);
 
-  g_queue_remove (priv->tabs, tab);
   g_hash_table_remove (priv->tabs_to_widgets, tab);
   g_hash_table_remove (priv->widgets_to_tabs, widget);
+  g_queue_remove (priv->tabs, tab);
+
+  /* destroy the notebook tab */
+  gtk_widget_destroy (tab);
+  g_object_unref (tab);
 
   gtk_widget_queue_resize (GTK_WIDGET (notebook));
 }
@@ -890,6 +1192,7 @@ gtk_notebook_ng_forall (GtkContainer *container,
                         gpointer      callback_data)
 {
   GtkNotebookNgPrivate *priv;
+  GQueue *copy;
   GList *tabs;
   GtkWidget *child_widget;
 
@@ -897,7 +1200,9 @@ gtk_notebook_ng_forall (GtkContainer *container,
 
   priv = GTK_NOTEBOOK_NG_GET_PRIVATE (GTK_NOTEBOOK_NG (container));
 
-  tabs = g_queue_peek_head_link (priv->tabs);
+  copy = g_queue_copy (priv->tabs);
+
+  tabs = g_queue_peek_head_link (copy);
 
   while (tabs)
     {
@@ -909,6 +1214,8 @@ gtk_notebook_ng_forall (GtkContainer *container,
       tabs = tabs->next;
     }
 
+  g_queue_free (copy);
+
   if (include_internals)
     {
       (* callback) (priv->previous, callback_data);
@@ -919,7 +1226,8 @@ gtk_notebook_ng_forall (GtkContainer *container,
 /* PRIVATE: GtkNotebookNg convenience functions */
 static void
 gtk_notebook_ng_select_widget (GtkNotebookNg *notebook,
-                               GtkWidget     *widget)
+                               GtkWidget     *widget,
+                               gboolean       activate_tab)
 {
   GtkNotebookNgPrivate *priv;
 
@@ -928,7 +1236,7 @@ gtk_notebook_ng_select_widget (GtkNotebookNg *notebook,
   priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
 
   if (priv->active)
-    gtk_widget_hide_all (priv->active);
+    gtk_widget_unmap (priv->active);
 
   if (widget)
     {
@@ -936,9 +1244,18 @@ gtk_notebook_ng_select_widget (GtkNotebookNg *notebook,
 
       gtk_widget_show_all (widget);
   
+      if (activate_tab && widget)
+        {
+          GtkToggleButton *tab = g_hash_table_lookup (priv->widgets_to_tabs,
+                                                      widget);
+
+          if (!gtk_toggle_button_get_active (tab))
+            gtk_toggle_button_set_active (tab, TRUE);
+        }
+
       if (GTK_WIDGET_VISIBLE (widget)
           && !GTK_WIDGET_DRAWABLE (widget))
-          gtk_widget_map (widget);
+        gtk_widget_map (widget);
     }
 }
 
@@ -957,7 +1274,7 @@ gtk_notebook_ng_select_cb (GtkButton     *button,
   selected = GTK_WIDGET (g_hash_table_lookup (priv->tabs_to_widgets,
                                               button));
 
-  gtk_notebook_ng_select_widget (notebook, selected);
+  gtk_notebook_ng_select_widget (notebook, selected, FALSE);
 }
 
 static void
@@ -971,6 +1288,7 @@ gtk_notebook_ng_previous_cb (GtkButton     *button,
   priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
 
   priv->offset--;
+
   gtk_widget_queue_resize (GTK_WIDGET (notebook));
 }
 
