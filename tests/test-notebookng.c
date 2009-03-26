@@ -9,7 +9,7 @@ notebook_add_signal_cb (GtkNotebookNg *notebook,
                         gpointer       data)
 {
   GtkLabel *label;
-  gchar *number, *res;
+  gchar *res;
   gint n = 0;
 
   g_return_val_if_fail (GTK_IS_LABEL (data), FALSE);
@@ -18,16 +18,11 @@ notebook_add_signal_cb (GtkNotebookNg *notebook,
 
   n = gtk_notebook_ng_get_n_pages (notebook);
 
-  number = g_malloc (5);
-  
-  g_sprintf (number, "%d", n);
-
-  res = g_strconcat ("Number of tabs: ", number, NULL);
+  res = g_strdup_printf ("Number of tabs: %d", n);
 
   gtk_label_set_text (label, res);
 
   g_free (res);
-  g_free (number);
 
   return FALSE;
 }
