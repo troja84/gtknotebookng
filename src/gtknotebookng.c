@@ -2,6 +2,9 @@
 
 #include "gtknotebookng.h"
 
+#define GTK_WIDGET_FLAGS(w) (GTK_OBJECT (w)->GSEAL(flags))
+#define GTK_OBJECT_FLAGS(w) (GTK_OBJECT (w)->GSEAL(flags))
+
 typedef struct _GtkNotebookNgPrivate GtkNotebookNgPrivate;
 
 struct _GtkNotebookNgPrivate {
@@ -391,15 +394,17 @@ gtk_notebook_ng_size_request (GtkWidget      *widget,
   notebook = GTK_NOTEBOOK_NG (widget);
   priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
 
-  widget->requisition.width = widget->requisition.height = 0;
+  widget->GSEAL (requisition).width = widget->GSEAL (requisition).height = 0;
 
-  gtk_notebook_ng_size_request_children (widget, &(widget->requisition));
+  gtk_notebook_ng_size_request_children (widget, &(widget->GSEAL (requisition)));
 
   if (priv->show_tabs)
-    gtk_notebook_ng_size_request_tabs (widget, &(widget->requisition));
+    gtk_notebook_ng_size_request_tabs (widget, &(widget->GSEAL (requisition)));
 
-  widget->requisition.width += GTK_CONTAINER (widget)->border_width * 2;
-  widget->requisition.height += GTK_CONTAINER (widget)->border_width * 2;
+  widget->GSEAL (requisition).width += 
+    GTK_CONTAINER (widget)->GSEAL (border_width) * 2;
+  widget->GSEAL (requisition).height += 
+    GTK_CONTAINER (widget)->GSEAL (border_width) * 2;
 
   /*
   g_printf ("> REQUEST NOTEBOOK: W: %d H: %d\n",
@@ -485,7 +490,7 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
   if (priv->offset > 0)
     {
       gtk_widget_show (priv->previous);
-
+      
       gtk_widget_get_child_requisition (priv->previous, &child_requisition);
 
       child_allocation.x = allocation->x + allocation->width
@@ -596,6 +601,9 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
     {
       gtk_widget_show (priv->next);
 
+      if (GDK_IS_WINDOW (GTK_BUTTON (priv->next)->GSEAL (event_window)))
+        gdk_window_raise (GTK_BUTTON (priv->next)->GSEAL (event_window));
+
       gtk_widget_get_child_requisition (priv->next, &child_requisition);
 
       child_allocation.x = allocation->x + allocation->width
@@ -649,7 +657,7 @@ gtk_notebook_ng_size_allocate (GtkWidget     *widget,
 
   g_return_if_fail (GTK_IS_NOTEBOOK_NG (widget));
 
-  widget->allocation = *allocation;
+  widget->GSEAL (allocation) = *allocation;
 
   /*
   g_printf ("> ALLOC: X: %d Y: %d W: %d H: %d\n",
@@ -711,7 +719,7 @@ gtk_notebook_ng_size_allocate (GtkWidget     *widget,
   gtk_notebook_ng_size_allocate_tabs (widget, &tab_area,
                                       max_tab_width, max_tab_height);
 
-  border_width = GTK_CONTAINER (widget)->border_width;
+  border_width = GTK_CONTAINER (widget)->GSEAL (border_width);
 
   child_area.x += border_width;
   child_area.y += border_width;
@@ -774,7 +782,8 @@ gtk_notebook_ng_expose (GtkWidget      *widget,
         {
           GtkAllocation *child_area = &(priv->child_allocation);
 
-          gtk_paint_box (widget->style, widget->window,
+          gtk_paint_box (gtk_widget_get_style (widget), 
+                         gtk_widget_get_window (widget),
                          GTK_STATE_NORMAL, GTK_SHADOW_OUT,
                          &(event->area), widget, "notebook",
                          child_area->x, child_area->y,
