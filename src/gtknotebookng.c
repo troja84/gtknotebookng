@@ -309,6 +309,7 @@ gtk_notebook_ng_size_request_tabs (GtkWidget      *widget,
   GtkRequisition child_requisition, tabs_requisition;
   GtkRequisition max_requisition, offset_requisition;
   gint counter;
+  gint max_width = 0;
   gint max_height = 0;
 
   g_return_if_fail (GTK_IS_NOTEBOOK_NG (widget));
@@ -328,7 +329,7 @@ gtk_notebook_ng_size_request_tabs (GtkWidget      *widget,
   tabs = g_queue_peek_head_link (priv->tabs);
   counter = 0;
 
-  while (tabs)
+  for (; tabs; tabs = tabs->next)
     {
       tab = GTK_WIDGET (tabs->data);
 
@@ -349,8 +350,6 @@ gtk_notebook_ng_size_request_tabs (GtkWidget      *widget,
         }
 
       counter++;
-
-      tabs = tabs->next;
     }
 
   switch (priv->position)
@@ -360,15 +359,18 @@ gtk_notebook_ng_size_request_tabs (GtkWidget      *widget,
         requisition->height += max_requisition.height;
 
         gtk_widget_size_request (priv->previous, &child_requisition);
-        if (GTK_WIDGET_DRAWABLE (priv->previous))
-          max_height = child_requisition.height;
+        max_height = child_requisition.height;
+        max_width = child_requisition.width;
 
         gtk_widget_size_request (priv->next, &child_requisition);
-        if (GTK_WIDGET_DRAWABLE (priv->next))
-          max_height = MAX (max_height, child_requisition.height);
+        max_height = MAX (max_height, child_requisition.height);
+        max_width += child_requisition.width;
 
         if (max_height > max_requisition.height)
             requisition->height += max_height - max_requisition.height;
+
+        requisition->width = MAX (max_width + max_requisition.width, 
+                                  requisition->width);
 
         break;
       case GTK_POS_LEFT:
@@ -431,7 +433,7 @@ gtk_notebook_ng_max_tab_size (GtkNotebookNg *notebook,
   children = g_queue_peek_head_link (priv->tabs);
   res  = 0;
 
-  while (children)
+  for (; children; children = children->next)
     {
       tab = GTK_WIDGET (children->data);
 
@@ -439,23 +441,15 @@ gtk_notebook_ng_max_tab_size (GtkNotebookNg *notebook,
 
       *width = MAX (*width, child_requisition.width);
       *height = MAX (*height, child_requisition.height);
-      
-      children = children->next;
     }
 
-  if (GTK_WIDGET_DRAWABLE (priv->previous))
-    {
-      gtk_widget_get_child_requisition (priv->previous, &child_requisition);
-      *width = MAX (*width, child_requisition.width);
-      *height = MAX (*height, child_requisition.height);
-    }
+  gtk_widget_get_child_requisition (priv->previous, &child_requisition);
+  *width = MAX (*width, child_requisition.width);
+  *height = MAX (*height, child_requisition.height);
 
-  if (GTK_WIDGET_DRAWABLE (priv->next))
-    {
-      gtk_widget_get_child_requisition (priv->next, &child_requisition);
-      *width = MAX (*width, child_requisition.width);
-      *height = MAX (*height, child_requisition.height);
-    }
+  gtk_widget_get_child_requisition (priv->next, &child_requisition);
+  *width = MAX (*width, child_requisition.width);
+  *height = MAX (*height, child_requisition.height);
 
   /*
   g_printf ("> MAX TAB SIZE: W: %d H: %d\n",
@@ -471,7 +465,7 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
 {
   GtkNotebookNg *notebook;
   GtkNotebookNgPrivate *priv;
-  GtkRequisition child_requisition;
+  GtkRequisition child_requisition, next_requisition;
   GtkAllocation child_allocation;
   GList *tabs;
   GtkWidget *tab;
@@ -486,51 +480,50 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
   notebook = GTK_NOTEBOOK_NG (widget);
   priv = GTK_NOTEBOOK_NG_GET_PRIVATE (notebook);
 
-  /* Start with the >previous< button */
-  if (priv->offset > 0)
-    {
-      gtk_widget_show (priv->previous);
+  /* START -- -previous- button */
+  gtk_widget_set_sensitive (priv->previous, priv->offset > 0);
       
-      gtk_widget_get_child_requisition (priv->previous, &child_requisition);
+  gtk_widget_get_child_requisition (priv->previous, &child_requisition);
 
-      child_allocation.x = allocation->x + allocation->width
-                           - child_requisition.width;
-      child_allocation.y = allocation->y + allocation->height
-                           - child_requisition.height;
-      child_allocation.width = child_requisition.width;
-      child_allocation.height = child_requisition.height;
+  child_allocation.x = allocation->x + allocation->width
+                       - child_requisition.width;
+  child_allocation.y = allocation->y + allocation->height
+                       - child_requisition.height;
+  child_allocation.width = child_requisition.width;
+  child_allocation.height = child_requisition.height;
 
-      switch (priv->position)
-        {
-          case GTK_POS_BOTTOM:
-            child_allocation.y = allocation->y + 
-                                 ABS (allocation->height 
-                                      - child_requisition.height);
-            /* fall through */
-          case GTK_POS_TOP:
-            child_allocation.x = allocation->x;
-            start_point_tabs = child_allocation.x + child_allocation.width;
-            break;
-          case GTK_POS_RIGHT:
-            child_allocation.x = allocation->x + 
-                                 ABS (allocation->width
-                                      - child_requisition.width);
-            /* fall through */
-          case GTK_POS_LEFT:
-            child_allocation.y = allocation->y;
-            start_point_tabs = child_allocation.y + child_allocation.height;
-            break;
-        }
-
-      gtk_widget_size_allocate (priv->previous, &child_allocation);
+  switch (priv->position)
+    {
+      case GTK_POS_BOTTOM:
+        child_allocation.y = allocation->y + 
+                             ABS (allocation->height 
+                                  - child_requisition.height);
+        /* fall through */
+      case GTK_POS_TOP:
+        child_allocation.x = allocation->x;
+        start_point_tabs = child_allocation.x + child_allocation.width;
+        break;
+      case GTK_POS_RIGHT:
+        child_allocation.x = allocation->x + 
+                             ABS (allocation->width
+                                  - child_requisition.width);
+        /* fall through */
+      case GTK_POS_LEFT:
+        child_allocation.y = allocation->y;
+        start_point_tabs = child_allocation.y + child_allocation.height;
+        break;
     }
-  else if (GTK_WIDGET_DRAWABLE (priv->previous))
-    gtk_widget_hide (priv->previous);
 
+  gtk_widget_size_allocate (priv->previous, &child_allocation);
+  /* END -- -previous- button */
+
+  /* START -- tabs */
   tabs = g_queue_peek_head_link (priv->tabs);
 
   for (counter = 0; counter < priv->offset && tabs; tabs = tabs->next, counter++)
     gtk_widget_hide (GTK_WIDGET (tabs->data));
+
+  gtk_widget_get_child_requisition (priv->next, &next_requisition);
 
   for (; tabs; tabs = tabs->next)
     {
@@ -558,7 +551,7 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
             start_point_tabs += child_requisition.width;
 
             if (child_allocation.x + child_allocation.width
-                >= allocation->x + allocation->width)
+                > allocation->x + allocation->width - next_requisition.width)
               need_button_next = TRUE;
 
             if (child_allocation.y < 0)
@@ -574,7 +567,7 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
             start_point_tabs += child_requisition.height;
 
             if (child_allocation.y + child_allocation.height
-                >= allocation->y + allocation->height)
+                > allocation->y + allocation->height - next_requisition.height)
               need_button_next = TRUE;
 
             if (child_allocation.x < 0)
@@ -596,53 +589,50 @@ gtk_notebook_ng_size_allocate_tabs (GtkWidget     *widget,
 
       gtk_widget_size_allocate (tab, &child_allocation);
     }
+  /* END -- tabs */
 
-  if (need_button_next)
+  /* START -- -next- button */
+  gtk_widget_set_sensitive (priv->next, need_button_next);
+
+  if (GDK_IS_WINDOW (GTK_BUTTON (priv->next)->GSEAL (event_window)))
+    gdk_window_raise (GTK_BUTTON (priv->next)->GSEAL (event_window));
+
+  gtk_widget_get_child_requisition (priv->next, &child_requisition);
+
+  child_allocation.x = allocation->x + allocation->width
+                       - child_requisition.width;
+  child_allocation.y = allocation->y + allocation->height
+                       - child_requisition.height;
+  child_allocation.width = child_requisition.width;
+  child_allocation.height = child_requisition.height;
+
+  switch (priv->position)
     {
-      gtk_widget_show (priv->next);
-
-      if (GDK_IS_WINDOW (GTK_BUTTON (priv->next)->GSEAL (event_window)))
-        gdk_window_raise (GTK_BUTTON (priv->next)->GSEAL (event_window));
-
-      gtk_widget_get_child_requisition (priv->next, &child_requisition);
-
-      child_allocation.x = allocation->x + allocation->width
-                           - child_requisition.width;
-      child_allocation.y = allocation->y + allocation->height
-                           - child_requisition.height;
-      child_allocation.width = child_requisition.width;
-      child_allocation.height = child_requisition.height;
-
-      switch (priv->position)
-        {
-          case GTK_POS_BOTTOM:
-            child_allocation.y = allocation->y + allocation->height 
-                                 - child_requisition.height;
-            /* fall through */
-          case GTK_POS_TOP:
-            if (child_allocation.y < 0)
-              gtk_widget_queue_resize (widget);
-            break;
-          case GTK_POS_RIGHT:
-            child_allocation.x = allocation->x + allocation->width
-                                 - child_requisition.width;
-            /* fall through */
-          case GTK_POS_LEFT:
-            if (child_allocation.x < 0)
-              gtk_widget_queue_resize (widget);
-            break;
-        }
-
-      /*
-      g_printf ("> ALLOC NEXT: X: %d Y: %d W: %d H: %d\n",
-                child_allocation.x, child_allocation.y,
-                child_allocation.width, child_allocation.height);
-      */
-
-      gtk_widget_size_allocate (priv->next, &child_allocation);
+      case GTK_POS_BOTTOM:
+        child_allocation.y = allocation->y + allocation->height 
+                             - child_requisition.height;
+        /* fall through */
+      case GTK_POS_TOP:
+        if (child_allocation.y < 0)
+          gtk_widget_queue_resize (widget);
+        break;
+      case GTK_POS_RIGHT:
+        child_allocation.x = allocation->x + allocation->width
+                             - child_requisition.width;
+        /* fall through */
+      case GTK_POS_LEFT:
+        if (child_allocation.x < 0)
+          gtk_widget_queue_resize (widget);
+        break;
     }
-  else if (GTK_WIDGET_DRAWABLE (priv->next))
-    gtk_widget_hide (priv->next);
+
+  gtk_widget_size_allocate (priv->next, &child_allocation);
+  /*
+  g_printf ("> ALLOC NEXT: X: %d Y: %d W: %d H: %d\n",
+            child_allocation.x, child_allocation.y,
+            child_allocation.width, child_allocation.height);
+  */
+  /* END -- -next- button */
 }
 /* - END - */
 
