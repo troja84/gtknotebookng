@@ -1,6 +1,7 @@
 #include <glib/gprintf.h>
 
 #include "gtknotebookng.h"
+#include "gtknotebookbutton.h"
 
 #define GTK_WIDGET_FLAGS(w) (GTK_OBJECT (w)->GSEAL(flags))
 #define GTK_OBJECT_FLAGS(w) (GTK_OBJECT (w)->GSEAL(flags))
@@ -126,12 +127,12 @@ gtk_notebook_ng_init (GtkNotebookNg *self)
   GtkWidget *next_img = gtk_image_new_from_stock ("gtk-go-forward",
                                                   GTK_ICON_SIZE_BUTTON);
 
-  priv->previous = gtk_button_new ();
+  priv->previous = GTK_WIDGET (gtk_notebook_button_new (GTK_DIR_LEFT, self));
   g_signal_connect (G_OBJECT (priv->previous), "clicked",
                     G_CALLBACK (gtk_notebook_ng_previous_cb), self);
   gtk_button_set_image (GTK_BUTTON (priv->previous), prev_img);
 
-  priv->next = gtk_button_new ();
+  priv->next = GTK_WIDGET (gtk_notebook_button_new (GTK_DIR_RIGHT, self));
   g_signal_connect (G_OBJECT (priv->next), "clicked",
                     G_CALLBACK (gtk_notebook_ng_next_cb), self);
   gtk_button_set_image (GTK_BUTTON (priv->next), next_img);

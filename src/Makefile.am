@@ -8,4 +8,6 @@ libgtknotebookng_la_LIBADD = ${GTKNOTEBOOKNG_LIBS}
 
 libgtknotebookng_la_SOURCES = \
 										gtknotebookng.c \
-										gtknotebookng.h
+										gtknotebookng.h \
+										gtknotebookbutton.c \
+										gtknotebookbutton.h
